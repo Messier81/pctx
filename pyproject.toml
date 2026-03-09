@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pctx"
+version = "0.1.0"
+description = "Product context that lives with your code. Track decisions, architecture, and the 'why' as your codebase evolves."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=2.0.0",
+    "typer[all]>=0.9.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+pctx = "pctx.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pctx"]
