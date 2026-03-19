@@ -31,15 +31,33 @@ pctx init                                    # set up .context/ in your repo
 pctx new decision "Choose Postgres"          # create a decision record
 pctx new context "Why we avoid ORMs"         # create a context record
 pctx new change "Migrated to microservices"  # create a change record
-pctx list                                    # list all records
+pctx list                                    # list all active records
 pctx list --type decision --status accepted  # filter by type and status
+pctx list --all                              # include superseded/deprecated
 pctx show DEC-001                            # show a specific record
-pctx search "database"                       # search by keyword
+pctx search "database"                       # search active records
+pctx search "database" --all                 # search everything
 pctx link DEC-002 depends_on DEC-001         # add a link between records
 pctx impact DEC-001                          # what's affected if this changes?
 pctx why DEC-005                             # trace the reasoning chain
 pctx context "auth"                          # dump all context for a topic
 ```
+
+### Lifecycle
+
+Decisions aren't permanent. When one turns out to be wrong:
+
+```bash
+pctx supersede DEC-001 "Use Memcached" -r "Redis licensing changed"
+pctx deprecate DEC-003 -r "No longer relevant after rewrite"
+pctx delete DEC-007 --force                  # hard delete (no history)
+```
+
+- **`supersede`** marks the old record as superseded, creates a replacement that links back, and adds a warning banner to the old body.
+- **`deprecate`** marks it as inactive without a replacement.
+- **`delete`** removes the file entirely (use for duplicates/mistakes, not wrong decisions).
+
+Superseded and deprecated records are **hidden by default** from `list`, `search`, and `context`. AI assistants will never accidentally reference an outdated decision. Use `--all` (CLI) or `include_inactive=True` (MCP) to see them.
 
 ## MCP Server
 
@@ -76,6 +94,9 @@ To configure in Cursor (or any MCP-compatible editor):
 | `pctx_why` | Trace upstream — reasoning chain behind a decision |
 | `pctx_context` | Dump everything relevant to a topic |
 | `pctx_link` | Add a typed link between two records |
+| `pctx_supersede` | Replace a decision with a new one (hides old from AI) |
+| `pctx_deprecate` | Mark a decision as inactive without replacement |
+| `pctx_delete` | Permanently remove a record |
 
 ## How it works
 

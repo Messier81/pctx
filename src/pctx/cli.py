@@ -68,12 +68,14 @@ def list_records(
     record_type: str | None = typer.Option(None, "--type", "-T"),
     status: str | None = typer.Option(None, "--status", "-s"),
     tag: str | None = typer.Option(None, "--tag", "-t"),
+    all_: bool = typer.Option(False, "--all", "-A", help="Include superseded/deprecated"),
 ) -> None:
     """List records with optional filters."""
     store = _store()
     rt = RecordType(record_type) if record_type else None
     st = Status(status) if status else None
-    records = store.list_all(record_type=rt, status=st, tag=tag)
+    incl = all_ or status in ("deprecated", "superseded")
+    records = store.list_all(record_type=rt, status=st, tag=tag, include_inactive=incl)
 
     if not records:
         console.print("[dim]No records found.[/dim]")
@@ -111,10 +113,13 @@ def show(record_id: str = typer.Argument(help="Record ID (e.g. DEC-001)")) -> No
 
 
 @app.command()
-def search(query: str = typer.Argument(help="Search term")) -> None:
+def search(
+    query: str = typer.Argument(help="Search term"),
+    all_: bool = typer.Option(False, "--all", "-A", help="Include superseded/deprecated"),
+) -> None:
     """Search records by keyword."""
     store = _store()
-    results = store.search(query)
+    results = store.search(query, include_inactive=all_)
     if not results:
         console.print(f"[dim]No results for '{query}'[/dim]")
         return
@@ -209,6 +214,53 @@ def link(
 
     store.save(record)
     console.print(f"[green]Linked {source_id} --{link_type}--> {target_id}[/green]")
+
+
+@app.command()
+def supersede(
+    old_id: str = typer.Argument(help="Record ID to supersede"),
+    new_title: str = typer.Argument(help="Title for the replacement"),
+    reason: str = typer.Option(..., "--reason", "-r", help="Why this is being replaced"),
+    authors: list[str] | None = typer.Option(None, "--author", "-a"),
+    tags: list[str] | None = typer.Option(None, "--tag", "-t"),
+) -> None:
+    """Replace a decision with a new one."""
+    store = _store()
+    old, new = store.supersede(old_id, new_title, reason, authors=authors, tags=tags)
+    console.print(f"[red]Superseded {old.id}:[/red] {old.title}")
+    console.print(f"  -> status: superseded (hidden from search/list)")
+    console.print(f"[green]Created {new.id}:[/green] {new.title}")
+    console.print(f"  -> supersedes: {old.id}")
+
+
+@app.command()
+def deprecate(
+    record_id: str = typer.Argument(help="Record ID to deprecate"),
+    reason: str = typer.Option(..., "--reason", "-r", help="Why this is deprecated"),
+) -> None:
+    """Deprecate a decision without replacing it."""
+    store = _store()
+    record = store.deprecate(record_id, reason)
+    console.print(f"[red]Deprecated {record.id}:[/red] {record.title}")
+    console.print(f"  -> reason: {reason}")
+
+
+@app.command()
+def delete(
+    record_id: str = typer.Argument(help="Record ID to delete"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """Permanently delete a record."""
+    store = _store()
+    record = store.get(record_id)
+    if not force:
+        console.print(f"About to delete [bold]{record.id}[/bold]: {record.title}")
+        confirm = typer.confirm("Are you sure?")
+        if not confirm:
+            console.print("[dim]Cancelled.[/dim]")
+            raise typer.Abort()
+    deleted = store.delete(record_id)
+    console.print(f"[red]Deleted {record_id}[/red] ({deleted})")
 
 
 @app.command()

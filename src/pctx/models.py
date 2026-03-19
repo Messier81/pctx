@@ -26,6 +26,9 @@ class LinkType(str, Enum):
     ENABLES = "enables"
 
 
+INACTIVE_STATUSES: set[Status] = {Status.DEPRECATED, Status.SUPERSEDED}
+
+
 PREFIXES: dict[RecordType, str] = {
     RecordType.DECISION: "DEC",
     RecordType.CHANGE: "CHG",

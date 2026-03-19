@@ -5,7 +5,15 @@ from pathlib import Path
 
 import yaml
 
-from .models import DIRS, PREFIX_TO_TYPE, PREFIXES, Record, RecordType, Status
+from .models import (
+    DIRS,
+    INACTIVE_STATUSES,
+    PREFIX_TO_TYPE,
+    PREFIXES,
+    Record,
+    RecordType,
+    Status,
+)
 
 _TEMPLATE_SECTIONS: dict[RecordType, str] = {
     RecordType.DECISION: (
@@ -116,6 +124,7 @@ class Store:
         record_type: RecordType | None = None,
         status: Status | None = None,
         tag: str | None = None,
+        include_inactive: bool = True,
     ) -> list[Record]:
         records: list[Record] = []
         dirs = [DIRS[record_type]] if record_type else list(DIRS.values())
@@ -128,6 +137,8 @@ class Store:
                 try:
                     record = self._parse_record(path)
                 except Exception:
+                    continue
+                if not include_inactive and record.status in INACTIVE_STATUSES:
                     continue
                 if status and record.status != status:
                     continue
@@ -152,10 +163,12 @@ class Store:
         path.write_text(self._serialize_record(record))
         return path
 
-    def search(self, query: str) -> list[Record]:
+    def search(
+        self, query: str, include_inactive: bool = False
+    ) -> list[Record]:
         query_lower = query.lower()
         scored: list[tuple[int, Record]] = []
-        for record in self.list_all():
+        for record in self.list_all(include_inactive=include_inactive):
             score = 0
             if query_lower in record.title.lower():
                 score += 3
@@ -167,6 +180,69 @@ class Store:
                 scored.append((score, record))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [r for _, r in scored]
+
+    def supersede(
+        self,
+        old_id: str,
+        new_title: str,
+        reason: str,
+        authors: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> tuple[Record, Record]:
+        old = self.get(old_id)
+        old.status = Status.SUPERSEDED
+        old.body = (
+            f"> **SUPERSEDED** — This decision is no longer active. "
+            f"See replacement below.\n>\n"
+            f"> Reason: {reason}\n\n"
+            f"{old.body}"
+        )
+
+        new_record = Record(
+            id=self.next_id(old.type),
+            type=old.type,
+            title=new_title,
+            status=Status.ACCEPTED,
+            date=date.today(),
+            authors=authors or old.authors,
+            links={"supersedes": [old_id]},
+            tags=tags or old.tags,
+            body=(
+                f"## Context\n\n"
+                f"This supersedes {old_id} ({old.title}).\n\n"
+                f"Reason: {reason}\n\n"
+                f"## Decision\n\n\n\n"
+                f"## Why\n\n\n\n"
+                f"## Consequences\n\n"
+            ),
+        )
+
+        self.save(old)
+        self.save(new_record)
+        return old, new_record
+
+    def deprecate(self, record_id: str, reason: str) -> Record:
+        record = self.get(record_id)
+        record.status = Status.DEPRECATED
+        record.body = (
+            f"> **DEPRECATED** — This decision is no longer active.\n>\n"
+            f"> Reason: {reason}\n\n"
+            f"{record.body}"
+        )
+        self.save(record)
+        return record
+
+    def delete(self, record_id: str) -> Path:
+        prefix = record_id.split("-")[0]
+        if prefix not in PREFIX_TO_TYPE:
+            raise ValueError(f"Unknown prefix '{prefix}' in ID '{record_id}'")
+        record_type = PREFIX_TO_TYPE[prefix]
+        dir_name = DIRS[record_type]
+        path = self.context_dir / dir_name / f"{record_id}.md"
+        if not path.exists():
+            raise FileNotFoundError(f"Record {record_id} not found")
+        path.unlink()
+        return path
 
     def template_body(self, record_type: RecordType) -> str:
         return _TEMPLATE_SECTIONS.get(record_type, "")
