@@ -150,20 +150,26 @@ def pctx_list(
     record_type: str | None = None,
     status: str | None = None,
     tag: str | None = None,
+    include_inactive: bool = False,
     path: str | None = None,
 ) -> str:
     """List product context records with optional filters.
+
+    By default, superseded and deprecated records are hidden.
+    Set include_inactive=True to show them.
 
     Args:
         record_type: Filter by decision | change | context.
         status: Filter by draft | proposed | accepted | deprecated | superseded.
         tag: Filter by tag.
+        include_inactive: If True, include superseded/deprecated records.
         path: Repo root directory.
     """
     store = Store(root=Path(path) if path else _root())
     rt = RecordType(record_type) if record_type else None
     st = Status(status) if status else None
-    records = store.list_all(record_type=rt, status=st, tag=tag)
+    incl = include_inactive or status in ("deprecated", "superseded")
+    records = store.list_all(record_type=rt, status=st, tag=tag, include_inactive=incl)
 
     if not records:
         return "No records found."
@@ -178,17 +184,21 @@ def pctx_list(
 
 
 @mcp.tool
-def pctx_search(query: str, path: str | None = None) -> str:
+def pctx_search(
+    query: str, include_inactive: bool = False, path: str | None = None
+) -> str:
     """Search records by keyword in titles, body, and tags.
 
     Use before implementing a feature to find relevant decisions.
+    Superseded and deprecated records are excluded by default.
 
     Args:
         query: Search term (e.g. "template builder", "authentication").
+        include_inactive: If True, include superseded/deprecated records.
         path: Repo root directory.
     """
     store = Store(root=Path(path) if path else _root())
-    results = store.search(query)
+    results = store.search(query, include_inactive=include_inactive)
 
     if not results:
         return f"No records matching '{query}'."
@@ -317,3 +327,84 @@ def pctx_link(
 
     store.save(record)
     return f"Linked {source_id} --{link_type}--> {target_id}"
+
+
+@mcp.tool
+def pctx_supersede(
+    old_id: str,
+    new_title: str,
+    reason: str,
+    authors: list[str] | None = None,
+    tags: list[str] | None = None,
+    path: str | None = None,
+) -> str:
+    """Replace a decision with a new one.
+
+    Marks the old record as superseded (hidden from search/list by default),
+    creates a new record that supersedes it, and links them.
+
+    Use this when a decision turns out to be wrong or outdated.
+    The old record is preserved for history but AI will not reference it
+    unless explicitly asked.
+
+    Args:
+        old_id: The record ID to supersede (e.g. DEC-003).
+        new_title: Title for the replacement decision.
+        reason: Why the old decision is being replaced.
+        authors: Authors of the new decision.
+        tags: Tags for the new decision (inherits from old if not provided).
+        path: Repo root directory.
+    """
+    store = Store(root=Path(path) if path else _root())
+    old, new = store.supersede(
+        old_id, new_title, reason, authors=authors, tags=tags
+    )
+    return (
+        f"Superseded {old.id}: {old.title}\n"
+        f"  -> status changed to 'superseded' (hidden from search/list)\n"
+        f"  -> warning banner added to body\n\n"
+        f"Created {new.id}: {new.title}\n"
+        f"  -> status: accepted\n"
+        f"  -> links: supersedes {old.id}"
+    )
+
+
+@mcp.tool
+def pctx_deprecate(
+    record_id: str, reason: str, path: str | None = None
+) -> str:
+    """Deprecate a decision without replacing it.
+
+    Marks the record as deprecated (hidden from search/list by default).
+    Use when a decision is no longer relevant but there's no replacement.
+
+    Args:
+        record_id: The record ID to deprecate.
+        reason: Why this decision is being deprecated.
+        path: Repo root directory.
+    """
+    store = Store(root=Path(path) if path else _root())
+    record = store.deprecate(record_id, reason)
+    return (
+        f"Deprecated {record.id}: {record.title}\n"
+        f"  -> status changed to 'deprecated' (hidden from search/list)\n"
+        f"  -> reason: {reason}"
+    )
+
+
+@mcp.tool
+def pctx_delete(record_id: str, path: str | None = None) -> str:
+    """Permanently delete a record.
+
+    Use only for records that should never have existed (e.g. duplicates,
+    test records). For decisions that were wrong, prefer pctx_supersede
+    to preserve history.
+
+    Args:
+        record_id: The record ID to delete.
+        path: Repo root directory.
+    """
+    store = Store(root=Path(path) if path else _root())
+    store.get(record_id)  # verify it exists
+    deleted = store.delete(record_id)
+    return f"Deleted {record_id} ({deleted})"
