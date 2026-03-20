@@ -267,6 +267,107 @@ def delete(
 
 
 @app.command()
+def reflect(topic: str = typer.Argument(help="Topic keyword or record ID (e.g. THR-001)")) -> None:
+    """Synthesize everything known about a topic into a structured narrative."""
+    graph = _graph()
+    result = graph.reflect(topic)
+
+    console.print(f"\n[bold]Reflection on:[/bold] {result['topic']}\n")
+
+    section_labels = {
+        "thread": ("OVERVIEW", "magenta"),
+        "experience": ("EXPERIENCES", "cyan"),
+        "belief": ("CURRENT BELIEFS", "green"),
+        "decision": ("DECISIONS", "yellow"),
+        "change": ("CHANGES", "blue"),
+        "context": ("CONTEXT", "dim"),
+    }
+
+    for type_key, (label, color) in section_labels.items():
+        records = result["sections"].get(type_key, [])
+        if not records:
+            continue
+        console.print(f"\n[{color}]{label}:[/{color}]")
+        for r in records:
+            console.print(f"\n  [bold]{r['id']}[/bold]: {r['title']} ({r['date']})")
+            if r.get("extra"):
+                extras = ", ".join(f"{k}={v}" for k, v in r["extra"].items())
+                console.print(f"    [dim][{extras}][/dim]")
+            if r["body"]:
+                for line in r["body"][:400].split("\n"):
+                    console.print(f"    {line}")
+
+    if result["contradictions"]:
+        console.print("\n\n[red]UNRESOLVED CONTRADICTIONS:[/red]")
+        for c in result["contradictions"]:
+            console.print(f"  {c['a']['id']} ({c['a']['title']})")
+            console.print(f"    [red]vs[/red] {c['b']['id']} ({c['b']['title']})")
+
+    if not result["sections"] and not result["contradictions"]:
+        console.print("[dim]No records found for this topic.[/dim]")
+
+
+@app.command()
+def evolve(
+    days: int = typer.Option(30, "--days", "-d", help="Days before something is stale"),
+) -> None:
+    """Self-monitoring: surface stale beliefs, contradictions, dormant threads."""
+    graph = _graph()
+    result = graph.evolve(days)
+
+    has_output = False
+
+    if result["stale_beliefs"]:
+        has_output = True
+        console.print(f"\n[yellow]STALE BELIEFS (not revisited in {days}+ days):[/yellow]")
+        for r in result["stale_beliefs"]:
+            console.print(f"  {r['id']}: {r['title']} [dim](last: {r['date']})[/dim]")
+
+    if result["contradictions"]:
+        has_output = True
+        console.print(f"\n[red]UNRESOLVED CONTRADICTIONS:[/red]")
+        for c in result["contradictions"]:
+            console.print(f"  {c['a']['id']} ({c['a']['title']})")
+            console.print(f"    [red]vs[/red] {c['b']['id']} ({c['b']['title']})")
+
+    if result["dormant_threads"]:
+        has_output = True
+        console.print(f"\n[yellow]DORMANT THREADS (no activity in {days}+ days):[/yellow]")
+        for r in result["dormant_threads"]:
+            console.print(f"  {r['id']}: {r['title']} [dim](last activity: {r.get('last_activity', 'never')})[/dim]")
+
+    if result["recent"]:
+        has_output = True
+        console.print("\n[green]RECENT ACTIVITY (last 7 days):[/green]")
+        for type_name, records in result["recent"].items():
+            for r in records:
+                console.print(f"  {r['id']} [{type_name}]: {r['title']} ({r['date']})")
+
+    if not has_output:
+        console.print("\n[green]Nothing to report. All clear.[/green]")
+
+
+@app.command()
+def connections() -> None:
+    """Discover records that share tags but aren't linked."""
+    graph = _graph()
+    result = graph.connections()
+
+    if not result["suggestions"]:
+        console.print("[dim]No unlinked connections found.[/dim]")
+        return
+
+    console.print(f"\n[bold]SUGGESTED CONNECTIONS ({len(result['suggestions'])} found):[/bold]\n")
+    for s in result["suggestions"]:
+        tags = ", ".join(s["shared_tags"])
+        console.print(
+            f"  {s['a']['id']} ({s['a']['title']})"
+            f"  [blue]<->[/blue]  {s['b']['id']} ({s['b']['title']})"
+        )
+        console.print(f"    [dim]shared: {tags}[/dim]")
+
+
+@app.command()
 def serve() -> None:
     """Start the pctx MCP server."""
     from .server import mcp as mcp_server
