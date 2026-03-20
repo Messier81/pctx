@@ -35,7 +35,7 @@ def init() -> None:
 
 @app.command()
 def new(
-    record_type: str = typer.Argument(help="decision | change | context"),
+    record_type: str = typer.Argument(help="decision | change | context | experience | belief | thread"),
     title: str = typer.Argument(help="Short descriptive title"),
     status: str = typer.Option("draft", help="draft|proposed|accepted|deprecated|superseded"),
     authors: list[str] | None = typer.Option(None, "--author", "-a"),
@@ -104,6 +104,9 @@ def show(record_id: str = typer.Argument(help="Record ID (e.g. DEC-001)")) -> No
     console.print(f"  Status: {r.status.value}  |  Date: {r.date}  |  Authors: {', '.join(r.authors) or 'none'}")
     if r.tags:
         console.print(f"  Tags: {', '.join(r.tags)}")
+    if r.extra:
+        for k, v in r.extra.items():
+            console.print(f"  {k}: {v}")
     if r.links:
         console.print("  Links:")
         for lt, targets in r.links.items():
@@ -199,7 +202,7 @@ def context(query: str = typer.Argument(help="Topic to get context for")) -> Non
 @app.command()
 def link(
     source_id: str = typer.Argument(help="Source record ID"),
-    link_type: str = typer.Argument(help="supersedes|depends_on|relates_to|enables"),
+    link_type: str = typer.Argument(help="supersedes|depends_on|relates_to|enables|contradicts|inspired_by|part_of"),
     target_id: str = typer.Argument(help="Target record ID"),
 ) -> None:
     """Add a link between two records."""
