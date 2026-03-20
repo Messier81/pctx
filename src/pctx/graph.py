@@ -57,8 +57,8 @@ class Graph:
             "downstream": [],
         }
 
-        # Upstream: what this record depends on
-        for tid, lt in self._forward_links(record, ["depends_on"]):
+        # Upstream: what this record depends on / is inspired by / is part of
+        for tid, lt in self._forward_links(record, ["depends_on", "inspired_by", "part_of"]):
             target = self.records.get(tid)
             if target:
                 result["upstream"].append(
@@ -79,8 +79,8 @@ class Graph:
                 return []
             affected: list[dict] = []
 
-            # Records that depend_on rid
-            for sid, lt in self._reverse_links(rid, ["depends_on"]):
+            # Records that depend_on / are inspired_by / are part_of rid
+            for sid, lt in self._reverse_links(rid, ["depends_on", "inspired_by", "part_of"]):
                 if sid in visited:
                     continue
                 visited.add(sid)
@@ -115,8 +115,8 @@ class Graph:
                             }
                         )
 
-            # Weaker: records that relate_to this
-            for sid, lt in self._reverse_links(rid, ["relates_to"]):
+            # Weaker: records that relate_to or contradict this
+            for sid, lt in self._reverse_links(rid, ["relates_to", "contradicts"]):
                 if sid in visited:
                     continue
                 visited.add(sid)
@@ -161,8 +161,8 @@ class Graph:
             if record.body:
                 node["body_preview"] = record.body[:300]
 
-            # Hard chain: depends_on (forward from this record)
-            for tid, _ in self._forward_links(record, ["depends_on"]):
+            # Hard chain: depends_on / inspired_by (forward from this record)
+            for tid, _ in self._forward_links(record, ["depends_on", "inspired_by"]):
                 child = trace(tid, d + 1)
                 if child:
                     node["because"].append(child)
@@ -174,8 +174,8 @@ class Graph:
                     if child:
                         node["because"].append(child)
 
-            # Soft: relates_to (show but don't recurse deeply)
-            for tid, _ in self._forward_links(record, ["relates_to"]):
+            # Soft: relates_to / contradicts (show but don't recurse deeply)
+            for tid, _ in self._forward_links(record, ["relates_to", "contradicts"]):
                 target = self.records.get(tid)
                 if target:
                     node["informed_by"].append(

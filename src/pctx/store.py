@@ -32,6 +32,21 @@ _TEMPLATE_SECTIONS: dict[RecordType, str] = {
         "## Background\n\n\n\n"
         "## Why This Matters\n\n"
     ),
+    RecordType.EXPERIENCE: (
+        "## What Happened\n\n\n\n"
+        "## Reaction\n\n\n\n"
+        "## What It Connects To\n\n"
+    ),
+    RecordType.BELIEF: (
+        "## Position\n\n\n\n"
+        "## Why I Think This\n\n\n\n"
+        "## What Could Change My Mind\n\n"
+    ),
+    RecordType.THREAD: (
+        "## What This Is About\n\n\n\n"
+        "## Current State\n\n\n\n"
+        "## Open Questions\n\n"
+    ),
 }
 
 
@@ -64,6 +79,8 @@ class Store:
             )
         return self.context_dir
 
+    _STANDARD_FIELDS = {"id", "type", "title", "status", "date", "authors", "links", "tags"}
+
     def _parse_record(self, path: Path) -> Record:
         content = path.read_text()
         parts = content.split("---", 2)
@@ -77,6 +94,8 @@ class Store:
         for key, val in (meta.get("links") or {}).items():
             raw_links[key] = val if isinstance(val, list) else [val]
 
+        extra = {k: v for k, v in meta.items() if k not in self._STANDARD_FIELDS}
+
         return Record(
             id=meta["id"],
             type=RecordType(meta["type"]),
@@ -87,6 +106,7 @@ class Store:
             links=raw_links,
             tags=meta.get("tags") or [],
             body=body,
+            extra=extra,
         )
 
     def _serialize_record(self, record: Record) -> str:
@@ -104,6 +124,8 @@ class Store:
                 k: v if len(v) != 1 else v[0]
                 for k, v in record.links.items()
             }
+        if record.extra:
+            meta.update(record.extra)
 
         frontmatter = yaml.dump(meta, default_flow_style=False, sort_keys=False)
         return f"---\n{frontmatter}---\n\n{record.body}\n"
@@ -208,12 +230,9 @@ class Store:
             links={"supersedes": [old_id]},
             tags=tags or old.tags,
             body=(
-                f"## Context\n\n"
-                f"This supersedes {old_id} ({old.title}).\n\n"
+                f"Supersedes {old_id} ({old.title}).\n\n"
                 f"Reason: {reason}\n\n"
-                f"## Decision\n\n\n\n"
-                f"## Why\n\n\n\n"
-                f"## Consequences\n\n"
+                f"{self.template_body(old.type)}"
             ),
         )
 

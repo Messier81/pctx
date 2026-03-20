@@ -13,8 +13,10 @@ from .store import Store
 mcp = FastMCP(
     name="pctx",
     instructions=(
-        "Product context server. Use these tools to understand product "
-        "decisions, architecture choices, and the reasoning behind them.\n\n"
+        "Context server for product decisions and identity/memory.\n\n"
+        "Record types:\n"
+        "- decision, change, context: product architecture and reasoning\n"
+        "- experience, belief, thread: identity, knowledge, intellectual interests\n\n"
         "Before implementing features or making architectural changes:\n"
         "1. Search for relevant decisions with pctx_search\n"
         "2. Check impact of changes with pctx_impact\n"
@@ -47,6 +49,9 @@ def _fmt_record(r: Record) -> str:
         f"Authors: {', '.join(r.authors) or 'none'}",
         f"Tags: {', '.join(r.tags) or 'none'}",
     ]
+    if r.extra:
+        for k, v in r.extra.items():
+            lines.append(f"{k}: {v}")
     if r.links:
         lines.append("Links:")
         for lt, targets in r.links.items():
@@ -100,20 +105,22 @@ def pctx_new(
     tags: list[str] | None = None,
     status: str = "draft",
     links: dict[str, list[str]] | None = None,
+    extra: dict[str, str] | None = None,
     path: str | None = None,
 ) -> str:
-    """Create a new product context record.
+    """Create a new context record.
 
     Args:
-        record_type: One of "decision", "change", or "context".
+        record_type: decision | change | context | experience | belief | thread.
         title: Short descriptive title.
-        body: Markdown body (sections like ## Context, ## Decision, ## Why).
-              If empty, a template is generated.
+        body: Markdown body. If empty, a template is generated.
         authors: List of author identifiers.
         tags: List of tags for categorization.
         status: draft | proposed | accepted | deprecated | superseded.
         links: {link_type: [record_ids]}. Types: supersedes, depends_on,
-               relates_to, enables.
+               relates_to, enables, contradicts, inspired_by, part_of.
+        extra: Additional metadata as key-value pairs (e.g. emotion,
+               confidence, source_url).
         path: Repo root directory.
     """
     store = Store(root=Path(path) if path else _root())
@@ -128,6 +135,7 @@ def pctx_new(
         links=links or {},
         tags=tags or [],
         body=body or store.template_body(rt),
+        extra=extra or {},
     )
     saved = store.save(record)
     return f"Created {record.id}: {record.title}\nSaved to {saved}"
@@ -312,7 +320,8 @@ def pctx_link(
 
     Args:
         source_id: Source record ID.
-        link_type: supersedes | depends_on | relates_to | enables.
+        link_type: supersedes | depends_on | relates_to | enables |
+                   contradicts | inspired_by | part_of.
         target_id: Target record ID.
         path: Repo root directory.
     """
