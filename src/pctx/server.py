@@ -417,3 +417,134 @@ def pctx_delete(record_id: str, path: str | None = None) -> str:
     store.get(record_id)  # verify it exists
     deleted = store.delete(record_id)
     return f"Deleted {record_id} ({deleted})"
+
+
+@mcp.tool
+def pctx_reflect(topic: str, path: str | None = None) -> str:
+    """Synthesize everything known about a topic into a structured narrative.
+
+    Given a topic keyword or a record ID (e.g. THR-001), gathers all related
+    records and organizes them by type: overview, experiences, beliefs,
+    decisions, and unresolved contradictions.
+
+    Use to understand the full picture of a topic across all record types.
+
+    Args:
+        topic: Topic keyword or record ID (e.g. "consciousness" or "THR-001").
+        path: Repo root directory.
+    """
+    graph = Graph(Store(root=Path(path) if path else _root()))
+    result = graph.reflect(topic)
+
+    lines = [f"Reflection on: {result['topic']}\n"]
+
+    section_labels = {
+        "thread": "OVERVIEW",
+        "experience": "EXPERIENCES",
+        "belief": "CURRENT BELIEFS",
+        "decision": "DECISIONS",
+        "change": "CHANGES",
+        "context": "CONTEXT",
+    }
+
+    for type_key, label in section_labels.items():
+        records = result["sections"].get(type_key, [])
+        if not records:
+            continue
+        lines.append(f"\n{label}:")
+        for r in records:
+            lines.append(f"\n  {r['id']}: {r['title']} ({r['date']})")
+            if r.get("extra"):
+                extras = ", ".join(f"{k}={v}" for k, v in r["extra"].items())
+                lines.append(f"    [{extras}]")
+            if r["body"]:
+                preview = r["body"][:400].replace("\n", "\n    ")
+                lines.append(f"    {preview}")
+
+    if result["contradictions"]:
+        lines.append("\n\nUNRESOLVED CONTRADICTIONS:")
+        for c in result["contradictions"]:
+            lines.append(f"  {c['a']['id']} ({c['a']['title']})")
+            lines.append(f"    vs {c['b']['id']} ({c['b']['title']})")
+
+    if not result["sections"] and not result["contradictions"]:
+        lines.append("No records found for this topic.")
+
+    return "\n".join(lines)
+
+
+@mcp.tool
+def pctx_evolve(stale_days: int = 30, path: str | None = None) -> str:
+    """Self-monitoring report: what needs attention?
+
+    Surfaces stale beliefs, unresolved contradictions, dormant threads,
+    and recent activity. Use to identify where growth has stalled or
+    where conflicts need resolution.
+
+    Args:
+        stale_days: Days before a belief or thread is considered stale (default 30).
+        path: Repo root directory.
+    """
+    graph = Graph(Store(root=Path(path) if path else _root()))
+    result = graph.evolve(stale_days)
+
+    lines: list[str] = []
+
+    if result["stale_beliefs"]:
+        lines.append(f"STALE BELIEFS (not revisited in {stale_days}+ days):")
+        for r in result["stale_beliefs"]:
+            lines.append(f"  {r['id']}: {r['title']} (last: {r['date']})")
+        lines.append("")
+
+    if result["contradictions"]:
+        lines.append("UNRESOLVED CONTRADICTIONS:")
+        for c in result["contradictions"]:
+            lines.append(f"  {c['a']['id']} ({c['a']['title']})")
+            lines.append(f"    vs {c['b']['id']} ({c['b']['title']})")
+        lines.append("")
+
+    if result["dormant_threads"]:
+        lines.append(f"DORMANT THREADS (no activity in {stale_days}+ days):")
+        for r in result["dormant_threads"]:
+            lines.append(f"  {r['id']}: {r['title']} (last activity: {r.get('last_activity', 'never')})")
+        lines.append("")
+
+    if result["recent"]:
+        lines.append("RECENT ACTIVITY (last 7 days):")
+        for type_name, records in result["recent"].items():
+            for r in records:
+                lines.append(f"  {r['id']} [{type_name}]: {r['title']} ({r['date']})")
+        lines.append("")
+
+    if not any([result["stale_beliefs"], result["contradictions"],
+                result["dormant_threads"], result["recent"]]):
+        lines.append("Nothing to report. All clear.")
+
+    return "\n".join(lines)
+
+
+@mcp.tool
+def pctx_connections(path: str | None = None) -> str:
+    """Discover records that share tags but aren't linked.
+
+    Finds potential connections you haven't made explicit yet.
+    Helps surface patterns and relationships across your knowledge graph.
+
+    Args:
+        path: Repo root directory.
+    """
+    graph = Graph(Store(root=Path(path) if path else _root()))
+    result = graph.connections()
+
+    if not result["suggestions"]:
+        return "No unlinked connections found."
+
+    lines = [f"SUGGESTED CONNECTIONS ({len(result['suggestions'])} found):\n"]
+    for s in result["suggestions"]:
+        tags = ", ".join(s["shared_tags"])
+        lines.append(
+            f"  {s['a']['id']} ({s['a']['title']})"
+            f"  <->  {s['b']['id']} ({s['b']['title']})"
+        )
+        lines.append(f"    shared: {tags}")
+    return "\n".join(lines)

@@ -96,12 +96,16 @@ class Store:
 
         extra = {k: v for k, v in meta.items() if k not in self._STANDARD_FIELDS}
 
+        raw_date = meta.get("date", date.today())
+        if isinstance(raw_date, str):
+            raw_date = date.fromisoformat(raw_date)
+
         return Record(
             id=meta["id"],
             type=RecordType(meta["type"]),
             title=meta["title"],
             status=Status(meta.get("status", "draft")),
-            date=meta.get("date", date.today()),
+            date=raw_date,
             authors=meta.get("authors") or [],
             links=raw_links,
             tags=meta.get("tags") or [],

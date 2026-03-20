@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from .models import Record
+from collections import defaultdict
+from datetime import date, timedelta
+from itertools import combinations
+
+from .models import INACTIVE_STATUSES, Record, RecordType
 from .store import Store
 
 
@@ -230,3 +234,174 @@ class Graph:
                 for r in related
             ],
         }
+
+    def _record_dict(self, r: Record) -> dict:
+        d: dict = {
+            "id": r.id,
+            "title": r.title,
+            "type": r.type.value,
+            "status": r.status.value,
+            "date": str(r.date),
+            "body": r.body,
+        }
+        if r.tags:
+            d["tags"] = r.tags
+        if r.extra:
+            d["extra"] = r.extra
+        return d
+
+    def reflect(self, topic_or_id: str) -> dict:
+        """Structured synthesis of everything known about a topic or thread."""
+        collected: dict[str, Record] = {}
+
+        # If it looks like a record ID, start from that record
+        record = self.records.get(topic_or_id)
+        if record:
+            collected[record.id] = record
+            # Get everything that's part_of this record
+            for sid, _ in self._reverse_links(record.id, ["part_of"]):
+                r = self.records.get(sid)
+                if r and r.status not in INACTIVE_STATUSES:
+                    collected[sid] = r
+            # Expand all forward links from collected records
+            for rid in list(collected):
+                r = collected[rid]
+                for tid, _ in self._forward_links(r):
+                    target = self.records.get(tid)
+                    if target and target.status not in INACTIVE_STATUSES:
+                        collected[tid] = target
+        else:
+            # Search by topic and expand
+            for r in self.store.search(topic_or_id):
+                collected[r.id] = r
+                for targets in r.links.values():
+                    for tid in targets:
+                        target = self.records.get(tid)
+                        if target and target.status not in INACTIVE_STATUSES:
+                            collected[tid] = target
+
+        # Group by type
+        type_order = ["thread", "experience", "belief", "decision", "change", "context"]
+        grouped: dict[str, list[dict]] = {t: [] for t in type_order}
+        for r in collected.values():
+            tv = r.type.value
+            if tv in grouped:
+                grouped[tv].append(self._record_dict(r))
+
+        # Sort experiences by date
+        grouped["experience"].sort(key=lambda x: x["date"])
+
+        # Find contradictions: active belief pairs linked by contradicts
+        contradictions: list[dict] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        for r in collected.values():
+            if r.type != RecordType.BELIEF:
+                continue
+            for tid, lt in self._forward_links(r, ["contradicts"]):
+                target = self.records.get(tid)
+                if not target or target.status in INACTIVE_STATUSES:
+                    continue
+                pair = tuple(sorted([r.id, tid]))
+                if pair not in seen_pairs:
+                    seen_pairs.add(pair)
+                    contradictions.append({
+                        "a": {"id": r.id, "title": r.title},
+                        "b": {"id": tid, "title": target.title},
+                    })
+
+        return {
+            "topic": topic_or_id,
+            "sections": {k: v for k, v in grouped.items() if v},
+            "contradictions": contradictions,
+        }
+
+    def evolve(self, stale_days: int = 30) -> dict:
+        """Self-monitoring: what needs attention?"""
+        today = date.today()
+        stale_cutoff = today - timedelta(days=stale_days)
+        recent_cutoff = today - timedelta(days=7)
+
+        active = [r for r in self.records.values() if r.status not in INACTIVE_STATUSES]
+
+        # Stale beliefs
+        stale_beliefs = [
+            self._record_dict(r) for r in active
+            if r.type == RecordType.BELIEF and r.date < stale_cutoff
+        ]
+        stale_beliefs.sort(key=lambda x: x["date"])
+
+        # Unresolved contradictions (both sides active)
+        contradictions: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for r in active:
+            for tid, lt in self._forward_links(r, ["contradicts"]):
+                target = self.records.get(tid)
+                if not target or target.status in INACTIVE_STATUSES:
+                    continue
+                pair = tuple(sorted([r.id, tid]))
+                if pair not in seen:
+                    seen.add(pair)
+                    contradictions.append({
+                        "a": {"id": r.id, "title": r.title, "date": str(r.date)},
+                        "b": {"id": tid, "title": target.title, "date": str(target.date)},
+                    })
+
+        # Dormant threads: active threads with no recent part_of records
+        dormant_threads: list[dict] = []
+        for r in active:
+            if r.type != RecordType.THREAD:
+                continue
+            parts = self._reverse_links(r.id, ["part_of"])
+            latest = None
+            for sid, _ in parts:
+                source = self.records.get(sid)
+                if source and source.status not in INACTIVE_STATUSES:
+                    if latest is None or source.date > latest:
+                        latest = source.date
+            if latest is None or latest < stale_cutoff:
+                entry = self._record_dict(r)
+                entry["last_activity"] = str(latest) if latest else "never"
+                dormant_threads.append(entry)
+
+        # Recent activity
+        recent: dict[str, list[dict]] = defaultdict(list)
+        for r in active:
+            if r.date >= recent_cutoff:
+                recent[r.type.value].append(self._record_dict(r))
+
+        return {
+            "stale_beliefs": stale_beliefs,
+            "contradictions": contradictions,
+            "dormant_threads": dormant_threads,
+            "recent": dict(recent),
+        }
+
+    def connections(self) -> dict:
+        """Discover records that share tags but aren't linked."""
+        active = [r for r in self.records.values() if r.status not in INACTIVE_STATUSES]
+
+        # Build set of all existing links (both directions)
+        linked: set[tuple[str, str]] = set()
+        for r in active:
+            for targets in r.links.values():
+                for tid in targets:
+                    linked.add((r.id, tid))
+                    linked.add((tid, r.id))
+
+        # Find unlinked pairs sharing tags
+        suggestions: list[dict] = []
+        for a, b in combinations(active, 2):
+            if not a.tags or not b.tags:
+                continue
+            if (a.id, b.id) in linked:
+                continue
+            shared = set(a.tags) & set(b.tags)
+            if shared:
+                suggestions.append({
+                    "a": {"id": a.id, "title": a.title, "type": a.type.value},
+                    "b": {"id": b.id, "title": b.title, "type": b.type.value},
+                    "shared_tags": sorted(shared),
+                })
+
+        suggestions.sort(key=lambda x: len(x["shared_tags"]), reverse=True)
+        return {"suggestions": suggestions}
